@@ -1,35 +1,60 @@
 import sys
 import os
-import cv2
 from ultralytics import YOLO
-from datetime import datetime
+import cv2
 
-model = YOLO("../best.pt")  # หรือ yolov8s.pt, yolov8m.pt ตามต้องการ
-
-image_path = sys.argv[1]  # รับ path จาก Node.js
-
-# สร้างโฟลเดอร์สำหรับบันทึกผลลัพธ์
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-output_dir = f"runs/detect/exp_{timestamp}"
-os.makedirs(output_dir, exist_ok=True)
-
-# ทำ detection
-results = model(image_path)
-
-# บันทึกรูปผลลัพธ์
-for i, r in enumerate(results):
-    # วาด bounding boxes บนรูป
-    annotated_img = r.plot()
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python detect.py <image_path>")
+        sys.exit(1)
     
-    # บันทึกรูป
-    output_filename = f"result_{i}.jpg"
-    output_path = os.path.join(output_dir, output_filename)
-    cv2.imwrite(output_path, annotated_img)
+    image_path = sys.argv[1]
     
-    print(f"Saved: {output_path}")
+    # ตรวจสอบไฟล์รูปภาพ
+    if not os.path.exists(image_path):
+        print(f"Error: Image file not found: {image_path}")
+        sys.exit(1)
+    
+    try:
+        # โหลดโมเดล YOLOv8
+        model = YOLO('../best.pt')  # หรือใช้โมเดลที่คุณต้องการ
+        
+        # กำหนดโฟลเดอร์สำหรับบันทึกผลลัพธ์
+        project_dir = os.path.join(os.getcwd(), 'runs')
+        
+        print(f"Input image: {image_path}")
+        print(f"Saving results to: {project_dir}")
+        
+        # ทำ detection
+        results = model(image_path, 
+                       save=True,           # บันทึกรูปผลลัพธ์
+                       project=project_dir, # โฟลเดอร์หลัก
+                       name='detect',       # ชื่อโฟลเดอร์ย่อย
+                       exist_ok=True)       # อนุญาตให้เขียนทับ
+        
+        # แสดงผลลัพธ์
+        for i, result in enumerate(results):
+            # นับจำนวน object ที่ detect ได้
+            num_detections = len(result.boxes) if result.boxes is not None else 0
+            print(f"Detected {num_detections} objects")
+            
+            # แสดงรายละเอียด class ที่ detect ได้
+            if result.boxes is not None:
+                for box in result.boxes:
+                    class_id = int(box.cls)
+                    confidence = float(box.conf)
+                    class_name = model.names[class_id]
+                    print(f"- {class_name}: {confidence:.2f}")
+            
+            # แสดงเส้นทางไฟล์ผลลัพธ์
+            if hasattr(result, 'save_dir') and result.save_dir:
+                print(f"Result saved to: {result.save_dir}")
+        
+        print("Detection completed successfully")
+        
+    except Exception as e:
+        print(f"Error during detection: {str(e)}")
+        sys.exit(1)
 
-# แสดงผล class ที่ตรวจเจอ
-for r in results:
-    if r.boxes.cls is not None:
-        for c in r.boxes.cls:
-            print(model.names[int(c)])
+if __name__ == "__main__":
+    main()

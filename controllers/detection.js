@@ -147,95 +147,137 @@ exports.detectionImg = async (req, res) => {
 
         python.on("close", async (code) => {
             try {
-                // More robust path handling
-                const detectPath = path.resolve(process.cwd(), 'runs', 'detect');
-                console.log("🔍 Looking for detection results in:", detectPath);
-
+                console.log(`🐍 Python process exited with code: ${code}`);
+                
                 // Wait a bit for YOLOv8 to finish writing files
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 2000));
 
-                // Check if the detect directory exists
-                if (!fs.existsSync(detectPath)) {
-                    console.error("❌ Detection directory doesn't exist:", detectPath);
+                // Try to find where YOLOv8 actually saved the results
+                let detectPath = null;
+                let resultDirPath = null;
+                let resultImgPath = null;
 
-                    // Try alternative paths
-                    const altPaths = [
-                        path.resolve(__dirname, '..', 'runs', 'detect'),
-                        path.resolve(__dirname, '..', '..', 'runs', 'detect'),
-                        path.resolve('./runs/detect'),
-                        path.resolve('./yolov8/runs/detect')
-                    ];
+                // Search in multiple possible locations
+                const searchPaths = [
+                    path.resolve(process.cwd(), 'runs', 'detect'),
+                    path.resolve(__dirname, '..', 'runs', 'detect'),
+                    path.resolve(__dirname, '..', '..', 'runs', 'detect'),
+                    path.resolve('./runs/detect'),
+                    path.resolve('./yolov8/runs/detect'),
+                    path.resolve(process.cwd(), 'yolov8', 'runs', 'detect'),
+                    // เพิ่มเส้นทางใหม่
+                    path.resolve('/tmp/runs/detect'),
+                    path.resolve(process.env.HOME || '/tmp', 'runs', 'detect')
+                ];
 
-                    let foundPath = null;
-                    for (const altPath of altPaths) {
-                        if (fs.existsSync(altPath)) {
-                            foundPath = altPath;
-                            console.log("✅ Found detection directory at:", altPath);
-                            break;
+                console.log("🔍 Searching for detection results in multiple paths...");
+                
+                for (const searchPath of searchPaths) {
+                    console.log(`📁 Checking: ${searchPath}`);
+                    
+                    if (fs.existsSync(searchPath)) {
+                        try {
+                            const dirContents = fs.readdirSync(searchPath);
+                            console.log(`📂 Contents of ${searchPath}:`, dirContents);
+                            
+                            const subDirs = dirContents
+                                .map(name => ({
+                                    name,
+                                    fullPath: path.join(searchPath, name),
+                                }))
+                                .filter(entry => {
+                                    try {
+                                        return fs.statSync(entry.fullPath).isDirectory();
+                                    } catch (err) {
+                                        return false;
+                                    }
+                                })
+                                .sort((a, b) => {
+                                    try {
+                                        return fs.statSync(b.fullPath).mtimeMs - fs.statSync(a.fullPath).mtimeMs;
+                                    } catch (err) {
+                                        return 0;
+                                    }
+                                });
+
+                            if (subDirs.length > 0) {
+                                detectPath = searchPath;
+                                resultDirPath = subDirs[0].fullPath;
+                                console.log(`✅ Found detection results at: ${resultDirPath}`);
+                                break;
+                            }
+                        } catch (err) {
+                            console.warn(`⚠️ Error reading ${searchPath}:`, err.message);
                         }
                     }
+                }
 
-                    if (!foundPath) {
-                        throw new Error(`Detection directory not found. Searched paths: ${[detectPath, ...altPaths].join(', ')}`);
+                // ถ้าไม่เจอโฟลเดอร์ ให้ลองหาไฟล์ผลลัพธ์โดยตรง
+                if (!resultDirPath) {
+                    console.log("🔍 No subdirectories found, searching for result files directly...");
+                    
+                    // ลองหาไฟล์ในโฟลเดอร์ที่มีอยู่
+                    const directSearchPaths = [
+                        ...searchPaths,
+                        // เพิ่มเส้นทางที่อาจจะมีไฟล์โดยตรง
+                        path.dirname(imagePath), // โฟลเดอร์เดียวกับรูปต้นฉบับ
+                        path.resolve(process.cwd()),
+                        path.resolve(__dirname, '..'),
+                        '/tmp'
+                    ];
+
+                    for (const searchPath of directSearchPaths) {
+                        if (fs.existsSync(searchPath)) {
+                            try {
+                                const files = fs.readdirSync(searchPath);
+                                const imageFiles = files.filter(file => 
+                                    /\.(jpg|jpeg|png|webp)$/i.test(file) && 
+                                    file !== path.basename(imagePath) // ไม่เอารูปต้นฉบับ
+                                );
+                                
+                                if (imageFiles.length > 0) {
+                                    // หาไฟล์ที่สร้างล่าสุด
+                                    const newestFile = imageFiles
+                                        .map(file => ({
+                                            name: file,
+                                            fullPath: path.join(searchPath, file),
+                                            mtime: fs.statSync(path.join(searchPath, file)).mtimeMs
+                                        }))
+                                        .sort((a, b) => b.mtime - a.mtime)[0];
+                                    
+                                    resultImgPath = newestFile.fullPath;
+                                    console.log(`✅ Found result image directly: ${resultImgPath}`);
+                                    break;
+                                }
+                            } catch (err) {
+                                console.warn(`⚠️ Error searching ${searchPath}:`, err.message);
+                            }
+                        }
+                    }
+                }
+
+                // ถ้าเจอโฟลเดอร์แล้ว ให้หาไฟล์รูปในโฟลเดอร์นั้น
+                if (resultDirPath && !resultImgPath) {
+                    const resultFiles = fs.readdirSync(resultDirPath).filter(file =>
+                        /\.(jpg|jpeg|png|webp)$/i.test(file)
+                    );
+
+                    if (resultFiles.length === 0) {
+                        const allFiles = fs.readdirSync(resultDirPath);
+                        throw new Error(`No image files found in result folder ${resultDirPath}. Found files: ${allFiles.join(', ')}`);
                     }
 
-                    detectPath = foundPath;
+                    resultImgPath = path.join(resultDirPath, resultFiles[0]);
                 }
 
-                // Get subdirectories with error handling
-                let subDirs;
-                try {
-                    const dirContents = fs.readdirSync(detectPath);
-                    subDirs = dirContents
-                        .map(name => ({
-                            name,
-                            fullPath: path.join(detectPath, name),
-                        }))
-                        .filter(entry => {
-                            try {
-                                return fs.statSync(entry.fullPath).isDirectory();
-                            } catch (err) {
-                                console.warn(`⚠️ Cannot stat ${entry.fullPath}:`, err.message);
-                                return false;
-                            }
-                        })
-                        .sort((a, b) => {
-                            try {
-                                return fs.statSync(b.fullPath).mtimeMs - fs.statSync(a.fullPath).mtimeMs;
-                            } catch (err) {
-                                console.warn(`⚠️ Cannot compare timestamps:`, err.message);
-                                return 0;
-                            }
-                        })
-                        .map(entry => entry.name);
-                } catch (err) {
-                    throw new Error(`Failed to read detection directory: ${err.message}`);
+                // ถ้าไม่เจอไฟล์ผลลัพธ์เลย
+                if (!resultImgPath) {
+                    // ให้ดู output จาก Python เพื่อหาเส้นทางจริง
+                    console.log("🐍 Python output:", output);
+                    
+                    throw new Error("No result image found. Python output: " + output.trim());
                 }
 
-                if (subDirs.length === 0) {
-                    throw new Error(`No subdirectories found in ${detectPath}`);
-                }
-
-                const latestDir = subDirs[0];
-                const resultDirPath = path.join(detectPath, latestDir);
-                console.log("📁 Using result directory:", resultDirPath);
-
-                // Check if result directory exists and has files
-                if (!fs.existsSync(resultDirPath)) {
-                    throw new Error(`Result directory doesn't exist: ${resultDirPath}`);
-                }
-
-                const resultFiles = fs.readdirSync(resultDirPath).filter(file =>
-                    /\.(jpg|jpeg|png|webp)$/i.test(file)
-                );
-
-                if (resultFiles.length === 0) {
-                    const allFiles = fs.readdirSync(resultDirPath);
-                    throw new Error(`No image files found in result folder. Found files: ${allFiles.join(', ')}`);
-                }
-
-                const resultImageFile = resultFiles[0];
-                const resultImgPath = path.join(resultDirPath, resultImageFile);
                 console.log("🖼️ Processing result image:", resultImgPath);
 
                 // Verify the result image exists
@@ -264,14 +306,14 @@ exports.detectionImg = async (req, res) => {
             } catch (err) {
                 console.error("❌ Error in detection processing:", err.message);
                 console.error("Full error:", err);
-
+                
                 if (!res.headersSent) {
-                    res.status(500).json({
-                        error: "Detection processing failed",
-                        details: err.message
+                    res.status(500).json({ 
+                        error: "Detection processing failed", 
+                        details: err.message 
                     });
                 }
-
+                
                 // Still try to clean up the original uploaded file
                 cleanup(imagePath);
             }
@@ -281,9 +323,9 @@ exports.detectionImg = async (req, res) => {
         python.on('error', (err) => {
             console.error("❌ Python process error:", err);
             if (!res.headersSent) {
-                res.status(500).json({
-                    error: "Detection process failed to start",
-                    details: err.message
+                res.status(500).json({ 
+                    error: "Detection process failed to start", 
+                    details: err.message 
                 });
             }
         });
