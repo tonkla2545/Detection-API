@@ -136,18 +136,30 @@ exports.detectionImg = async (req, res) => {
         const python = spawn("python", ["yolov8/detect.py", imagePath]);
 
         let output = "";
+        let errorOutput = "";
 
         python.stdout.on("data", (data) => {
-            output += data.toString();
+            const text = data.toString();
+            output += text;
+            console.log("🐍 Python stdout:", text.trim());
         });
 
         python.stderr.on("data", (data) => {
-            console.error(`stderr: ${data}`);
+            const text = data.toString();
+            errorOutput += text;
+            console.error("🐍 Python stderr:", text.trim());
         });
 
         python.on("close", async (code) => {
             try {
                 console.log(`🐍 Python process exited with code: ${code}`);
+                console.log(`🐍 Python stdout output: "${output.trim()}"`);
+                console.log(`🐍 Python stderr output: "${errorOutput.trim()}"`);
+                
+                // ถ้า Python ล้มเหลว
+                if (code !== 0) {
+                    throw new Error(`Python script failed with exit code ${code}. Error: ${errorOutput.trim() || 'No error message'}`);
+                }
                 
                 // Wait a bit for YOLOv8 to finish writing files
                 await new Promise(resolve => setTimeout(resolve, 2000));
@@ -272,10 +284,24 @@ exports.detectionImg = async (req, res) => {
 
                 // ถ้าไม่เจอไฟล์ผลลัพธ์เลย
                 if (!resultImgPath) {
-                    // ให้ดู output จาก Python เพื่อหาเส้นทางจริง
-                    console.log("🐍 Python output:", output);
+                    // แสดงข้อมูล debug ทั้งหมด
+                    console.log("🔍 Debug Information:");
+                    console.log("- Python exit code:", code);
+                    console.log("- Python stdout:", output.trim() || "No output");
+                    console.log("- Python stderr:", errorOutput.trim() || "No errors");
+                    console.log("- Image path:", imagePath);
+                    console.log("- Current working directory:", process.cwd());
                     
-                    throw new Error("No result image found. Python output: " + output.trim());
+                    // ลองหารูปในโฟลเดอร์ปัจจุบัน
+                    const currentDirFiles = fs.readdirSync(process.cwd())
+                        .filter(file => /\.(jpg|jpeg|png|webp)$/i.test(file));
+                    console.log("- Images in current directory:", currentDirFiles);
+                    
+                    throw new Error(`No result image found after Python detection. 
+                        Exit code: ${code}
+                        Python output: "${output.trim() || 'No output'}"
+                        Python errors: "${errorOutput.trim() || 'No errors'}"
+                        Current directory files: ${currentDirFiles.join(', ')}`);
                 }
 
                 console.log("🖼️ Processing result image:", resultImgPath);
