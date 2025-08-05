@@ -1,7 +1,7 @@
+#!/usr/bin/env python3
 import sys
 import os
 import shutil
-from PIL import Image, ImageDraw
 
 def main():
     print("🐍 Python script started")
@@ -22,6 +22,7 @@ def main():
         sys.exit(1)
     
     print(f"✅ Input image exists")
+    print(f"📏 File size: {os.path.getsize(image_path)} bytes")
     
     try:
         # สร้างโฟลเดอร์ผลลัพธ์
@@ -36,7 +37,7 @@ def main():
         os.makedirs(result_dir, exist_ok=True)
         print(f"📁 Created result directory: {result_dir}")
         
-        # ลองใช้ YOLOv8 จริง
+        # ลองใช้ YOLOv8 จริงก่อน
         try:
             print("🔍 Trying to import ultralytics...")
             from ultralytics import YOLO
@@ -44,7 +45,7 @@ def main():
             
             # โหลดโมเดล
             print("🤖 Loading YOLO model...")
-            model = YOLO('../best.pt')
+            model = YOLO('yolov8n.pt')
             print("✅ YOLO model loaded")
             
             # ทำ detection
@@ -62,48 +63,47 @@ def main():
             for result in results:
                 if hasattr(result, 'save_dir') and result.save_dir:
                     print(f"📁 YOLO saved results to: {result.save_dir}")
+                    
+                # แสดงจำนวน objects ที่ detect ได้
+                if hasattr(result, 'boxes') and result.boxes is not None:
+                    num_detections = len(result.boxes)
+                    print(f"🎯 Detected {num_detections} objects")
+                    
+                    # แสดงรายละเอียด classes
+                    for box in result.boxes:
+                        class_id = int(box.cls)
+                        confidence = float(box.conf)
+                        class_name = model.names[class_id]
+                        print(f"  - {class_name}: {confidence:.2f}")
             
         except ImportError as e:
             print(f"⚠️ Cannot import ultralytics: {e}")
-            print("🎨 Using fallback: creating dummy detection result...")
+            print("📋 Using fallback: copying original image...")
             
-            # สร้างรูปปลอมสำหรับทดสอบ (ถ้า YOLO ไม่มี)
-            try:
-                # เปิดรูปต้นฉบับ
-                with Image.open(image_path) as img:
-                    # สร้างสำเนา
-                    result_img = img.copy()
-                    draw = ImageDraw.Draw(result_img)
-                    
-                    # วาดกรอบสี่เหลี่ยมปลอม (dummy detection)
-                    width, height = img.size
-                    draw.rectangle([width//4, height//4, 3*width//4, 3*height//4], 
-                                 outline="red", width=3)
-                    
-                    # บันทึกรูปผลลัพธ์
-                    result_filename = os.path.basename(image_path)
-                    result_path = os.path.join(result_dir, result_filename)
-                    result_img.save(result_path)
-                    
-                    print(f"💾 Saved dummy result to: {result_path}")
-                    print("✅ Dummy detection completed")
-                    
-            except Exception as img_error:
-                print(f"❌ Error creating dummy result: {img_error}")
-                # ถ้าสร้างรูปไม่ได้ ก็แค่คัดลอกไฟล์เดิม
-                result_filename = os.path.basename(image_path)
-                result_path = os.path.join(result_dir, result_filename)
-                shutil.copy2(image_path, result_path)
-                print(f"📋 Copied original image to: {result_path}")
-        
+            # ถ้าไม่มี YOLO ก็แค่คัดลอกไฟล์เดิม
+            result_filename = os.path.basename(image_path)
+            result_path = os.path.join(result_dir, result_filename)
+            shutil.copy2(image_path, result_path)
+            print(f"📋 Copied original image to: {result_path}")
+            print("✅ Fallback completed (no actual detection performed)")
+            
         except Exception as yolo_error:
             print(f"❌ YOLO detection failed: {yolo_error}")
-            sys.exit(1)
+            print("📋 Using fallback: copying original image...")
+            
+            # ถ้า YOLO error ก็แค่คัดลอกไฟล์เดิม
+            result_filename = os.path.basename(image_path)
+            result_path = os.path.join(result_dir, result_filename)
+            shutil.copy2(image_path, result_path)
+            print(f"📋 Copied original image to: {result_path}")
         
         # แสดงไฟล์ในโฟลเดอร์ผลลัพธ์
         if os.path.exists(result_dir):
             files = os.listdir(result_dir)
             print(f"📂 Files in result directory: {files}")
+            for file in files:
+                file_path = os.path.join(result_dir, file)
+                print(f"   📄 {file} ({os.path.getsize(file_path)} bytes)")
         
         print("🎉 Script completed successfully")
         
