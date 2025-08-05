@@ -45,7 +45,7 @@ def main():
             
             # โหลดโมเดล
             print("🤖 Loading YOLO model...")
-            model = YOLO('yolov8n.pt')
+            model = YOLO('../best.pt')
             print("✅ YOLO model loaded")
             
             # ทำ detection
