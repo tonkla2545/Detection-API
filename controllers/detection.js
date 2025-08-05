@@ -33,18 +33,22 @@ exports.detectionImg = async (req, res) => {
         python.on("close", async (code) => {
             try {
                 const detectPath = path.join(process.cwd(), 'runs', 'detect');
-                
+
 
                 if (!fs.existsSync(detectPath)) {
                     fs.mkdirSync(detectPath, { recursive: true });
                 }
 
-                const subDirs = fs.readdirSync(detectPath).sort((a, b) => {
-                    return (
-                        fs.statSync(path.join(detectPath, b)).mtimeMs -
-                        fs.statSync(path.join(detectPath, a)).mtimeMs
-                    );
-                });
+                const subDirs = fs.readdirSync(detectPath)
+                    .map(name => ({
+                        name,
+                        fullPath: path.join(detectPath, name),
+                    }))
+                    .filter(entry => fs.statSync(entry.fullPath).isDirectory())
+                    .sort((a, b) => {
+                        return fs.statSync(b.fullPath).mtimeMs - fs.statSync(a.fullPath).mtimeMs;
+                    })
+                    .map(entry => entry.name); // กลับมาเป็นแค่ชื่อโฟลเดอร์
 
                 const latestDir = subDirs[0];
                 const resultDirPath = path.join(detectPath, latestDir);
