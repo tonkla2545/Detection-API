@@ -33,6 +33,7 @@ exports.detectionImg = async (req, res) => {
         python.on("close", async (code) => {
             try {
                 const detectPath = path.join(process.cwd(), 'runs', 'detect');
+                
 
                 if (!fs.existsSync(detectPath)) {
                     fs.mkdirSync(detectPath, { recursive: true });
