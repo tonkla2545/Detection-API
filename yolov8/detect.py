@@ -201,6 +201,7 @@ def verify_output_files(detect_dir):
             size = os.path.getsize(file_path)
             print(f"   • {file} ({size} bytes)")
             
+            
     except Exception as e:
         print(f"⚠️ Error verifying output: {e}")
 
