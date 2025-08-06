@@ -12,6 +12,7 @@ def main():
     os.environ['TORCH_HOME'] = '/tmp/torch'
     os.environ['HF_HOME'] = '/tmp/huggingface'
     
+    
     print("🐍 YOLO Detection Script Started")
     print(f"🐍 Python version: {sys.version}")
     print(f"🐍 Current working directory: {os.getcwd()}")
