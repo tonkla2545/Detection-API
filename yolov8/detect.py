@@ -84,6 +84,7 @@ def main():
         model_paths = [
             './yolov8/best_m.pt',
             './yolov8/best_n.pt',
+            
         ]
         
         model = None
