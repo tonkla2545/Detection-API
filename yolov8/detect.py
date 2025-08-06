@@ -82,6 +82,7 @@ def main():
         
         # ลำดับโหลดโมเดล
         model_paths = [
+            './yolov8/best_s.pt',
             './yolov8/best_m.pt',
             './yolov8/best_n.pt',    
         ]
