@@ -3,6 +3,7 @@ import sys
 import os
 import shutil
 import time
+from datetime import datetime
 
 def main():
     # Set environment variables for Render deployment
@@ -50,12 +51,9 @@ def main():
         
         # ลำดับการลองโหลด model
         model_paths = [
-            'yolov8n.pt',           # Default YOLOv8 nano
-            'yolov8s.pt',           # YOLOv8 small
-            './yolov8n.pt',         # ในโฟลเดอร์ปัจจุบัน
-            './best.pt',            # custom model ในโฟลเดอร์ปัจจุบัน
-            '../best.pt',           # custom model ในโฟลเดอร์บน
-            'best.pt'               # custom model
+            './best.pt',
+            'yolov8n.pt',  # fallback to nano model
+            'yolov8s.pt',  # small model
         ]
         
         model = None
@@ -91,29 +89,40 @@ def main():
         
         print("✅ YOLOv8 model loaded successfully")
         
-        # สร้างโฟลเดอร์ผลลัพธ์
+        # สร้างโฟลเดอร์ผลลัพธ์พร้อม timestamp
         runs_dir = os.path.join(os.getcwd(), 'runs')
-        detect_dir = os.path.join(runs_dir, 'detect')
+        detect_base_dir = os.path.join(runs_dir, 'detect')
         
-        print(f"📁 Output directory: {runs_dir}")
+        # สร้าง unique subdirectory name
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        detect_subdir = f"predict_{timestamp}"
+        final_output_dir = os.path.join(detect_base_dir, detect_subdir)
+        
+        print(f"📁 Output directory: {final_output_dir}")
         
         # ทำ Object Detection
         print("🔍 Running YOLOv8 detection...")
         results = model(
             image_path,
-            save=True,          # บันทึกรูปผลลัพธ์
-            project=runs_dir,   # โฟลเดอร์หลัก
-            name='detect',      # ชื่อโฟลเดอร์ย่อย
-            exist_ok=True,      # อนุญาตให้เขียนทับ
-            conf=0.25,          # confidence threshold
-            verbose=True        # แสดงรายละเอียด
+            save=True,              # บันทึกรูปผลลัพธ์
+            project=runs_dir,       # โฟลเดอร์หลัก
+            name=f'detect/{detect_subdir}',  # ชื่อโฟลเดอร์ย่อยแบบ nested
+            exist_ok=True,          # อนุญาตให้เขียนทับ
+            conf=0.25,              # confidence threshold
+            verbose=True            # แสดงรายละเอียด
         )
         
         print("✅ Detection completed!")
         
         # แสดงผลลัพธ์
         total_detections = 0
+        result_save_dir = None
+        
         for i, result in enumerate(results):
+            if hasattr(result, 'save_dir'):
+                result_save_dir = str(result.save_dir)
+                print(f"💾 Results saved to: {result_save_dir}")
+            
             if hasattr(result, 'boxes') and result.boxes is not None:
                 num_detections = len(result.boxes)
                 total_detections += num_detections
@@ -129,15 +138,18 @@ def main():
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     
                     print(f"  🎯 Object {j+1}: {class_name} ({confidence:.2%}) at [{int(x1)},{int(y1)},{int(x2)},{int(y2)}]")
-            
-            # แสดงเส้นทางที่บันทึกไฟล์
-            if hasattr(result, 'save_dir'):
-                print(f"💾 Results saved to: {result.save_dir}")
         
         print(f"🎉 Detection Summary: {total_detections} objects detected total")
         
+        # Manual verification and backup
+        if result_save_dir and os.path.exists(result_save_dir):
+            verify_and_backup_results(result_save_dir, image_path)
+        else:
+            print("⚠️ Result directory not found, using fallback")
+            fallback_copy(image_path)
+        
         # ตรวจสอบไฟล์ที่สร้างขึ้น
-        verify_output_files(detect_dir)
+        verify_output_files(detect_base_dir)
         
     except Exception as e:
         print(f"❌ Error during detection: {str(e)}")
@@ -148,23 +160,73 @@ def main():
         print("🔄 Using fallback method...")
         fallback_copy(image_path)
 
+def verify_and_backup_results(result_dir, original_image_path):
+    """ตรวจสอบและสำรองผลลัพธ์"""
+    try:
+        print(f"🔍 Verifying results in: {result_dir}")
+        
+        if not os.path.exists(result_dir):
+            print(f"⚠️ Result directory doesn't exist: {result_dir}")
+            return False
+        
+        # ค้นหาไฟล์รูปภาพในโฟลเดอร์ผลลัพธ์
+        image_files = []
+        for file in os.listdir(result_dir):
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tiff')):
+                image_files.append(file)
+        
+        if not image_files:
+            print("⚠️ No image files found in result directory")
+            return False
+        
+        # สำรองไฟล์ไปยังตำแหน่งที่ predictable
+        backup_dir = os.path.join(os.getcwd(), 'runs', 'detect')
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        original_filename = os.path.basename(original_image_path)
+        backup_path = os.path.join(backup_dir, original_filename)
+        
+        # คัดลอกไฟล์แรกที่พบ
+        source_file = os.path.join(result_dir, image_files[0])
+        shutil.copy2(source_file, backup_path)
+        
+        print(f"✅ Backup created: {backup_path}")
+        print(f"📄 Backup size: {os.path.getsize(backup_path)} bytes")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error in backup: {e}")
+        return False
+
 def fallback_copy(image_path):
     """สำรองแผน: คัดลอกรูปเดิมถ้า YOLO ไม่ทำงาน"""
     try:
         runs_dir = os.path.join(os.getcwd(), 'runs')
         detect_dir = os.path.join(runs_dir, 'detect')
         
-        # สร้างโฟลเดอร์ด้วย timestamp
+        # สร้างโฟลเดอร์หลัก
+        os.makedirs(detect_dir, exist_ok=True)
+        
+        # สร้างโฟลเดอร์ย่อยด้วย timestamp
         timestamp = int(time.time())
-        result_dir = os.path.join(detect_dir, f'predict{timestamp}')
-        os.makedirs(result_dir, exist_ok=True)
+        result_subdir = os.path.join(detect_dir, f'predict{timestamp}')
+        os.makedirs(result_subdir, exist_ok=True)
         
-        # คัดลอกรูปเดิม
+        # คัดลอกรูปเดิมไปทั้งโฟลเดอร์หลักและโฟลเดอร์ย่อย
         result_filename = os.path.basename(image_path)
-        result_path = os.path.join(result_dir, result_filename)
-        shutil.copy2(image_path, result_path)
         
-        print(f"📋 Fallback: Copied original image to {result_path}")
+        # คัดลอกไปโฟลเดอร์หลัก (สำหรับ compatibility)
+        main_result_path = os.path.join(detect_dir, result_filename)
+        shutil.copy2(image_path, main_result_path)
+        
+        # คัดลอกไปโฟลเดอร์ย่อย (สำหรับ structure ที่ถูกต้อง)
+        sub_result_path = os.path.join(result_subdir, result_filename)
+        shutil.copy2(image_path, sub_result_path)
+        
+        print(f"📋 Fallback: Copied original image to:")
+        print(f"   • Main: {main_result_path}")
+        print(f"   • Sub:  {sub_result_path}")
         print("⚠️ Note: No actual object detection was performed")
         
     except Exception as e:
@@ -178,12 +240,19 @@ def verify_output_files(detect_dir):
             print(f"⚠️ Detection directory not found: {detect_dir}")
             return
         
-        # หาโฟลเดอร์ล่าสุด
+        print(f"📂 Contents of {detect_dir}: {os.listdir(detect_dir)}")
+        
+        # หาโฟลเดอร์ย่อย
         subdirs = [d for d in os.listdir(detect_dir) 
                   if os.path.isdir(os.path.join(detect_dir, d))]
         
         if not subdirs:
             print("⚠️ No result subdirectories found")
+            # แสดงไฟล์ที่มีในโฟลเดอร์หลัก
+            files = [f for f in os.listdir(detect_dir) 
+                    if os.path.isfile(os.path.join(detect_dir, f))]
+            if files:
+                print(f"📄 Direct files in detect dir: {files}")
             return
         
         # เรียงตาม modified time
@@ -198,9 +267,9 @@ def verify_output_files(detect_dir):
         
         for file in files:
             file_path = os.path.join(latest_dir, file)
-            size = os.path.getsize(file_path)
-            print(f"   • {file} ({size} bytes)")
-            
+            if os.path.isfile(file_path):
+                size = os.path.getsize(file_path)
+                print(f"   • {file} ({size} bytes)")
             
     except Exception as e:
         print(f"⚠️ Error verifying output: {e}")
