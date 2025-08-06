@@ -15,6 +15,8 @@ def main():
     print("🐍 YOLO Detection Script Started")
     print(f"🐍 Python version: {sys.version}")
     print(f"🐍 Current working directory: {os.getcwd()}")
+    print(f"🐍 Script directory: {os.path.dirname(os.path.abspath(__file__))}")
+    print(f"🐍 Parent directory: {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}")
     print(f"🐍 Config dir: {os.environ.get('YOLO_CONFIG_DIR', 'default')}")
     
     if len(sys.argv) != 2:
@@ -30,6 +32,10 @@ def main():
         sys.exit(1)
     
     print(f"✅ Input image exists ({os.path.getsize(image_path)} bytes)")
+    
+    # ตรวจสอบ model files ในระบบ
+    print("🔍 Scanning for YOLO model files...")
+    check_model_files()
     
     try:
         print("📦 Importing required packages...")
@@ -49,11 +55,27 @@ def main():
         # โหลดโมเดล YOLOv8
         print("🤖 Loading YOLOv8 model...")
         
-        # ลำดับการลองโหลด model
+        # ตรวจสอบไฟล์ best.pt ก่อน
+        print("🔍 Checking for custom model files...")
+        current_dir_files = os.listdir('.')
+        print(f"📁 Files in current directory: {[f for f in current_dir_files if f.endswith('.pt')]}")
+        
+        # ลำดับการลองโหลด model โดยคำนึงถึง directory structure
+        # รองรับทั้ง src/ และ server/ structure
         model_paths = [
-            './best.pt',
-            'yolov8n.pt',  # fallback to nano model
-            'yolov8s.pt',  # small model
+            './best.pt',                    # ใน current folder
+            '../best.pt',                   # ใน parent folder
+            '../../best.pt',                # ใน project root
+            './server/yolov8/best.pt',      # server structure จาก root
+            '../server/yolov8/best.pt',     # server structure จาก parent
+            './yolov8/best.pt',             # yolov8 subfolder
+            '../yolov8/best.pt',            # yolov8 in parent
+            '../../server/yolov8/best.pt',  # server structure จาก deeper level
+            './models/best.pt',             # models folder
+            '../models/best.pt',            # models in parent
+            'best.pt',                      # relative path
+            'yolov8n.pt',                   # fallback to nano model
+            'yolov8s.pt',                   # small model
         ]
         
         model = None
@@ -61,13 +83,27 @@ def main():
             try:
                 print(f"🔍 Trying to load model: {model_path}")
                 
-                # ถ้าเป็นไฟล์ที่มีอยู่แล้ว
+                # ตรวจสอบไฟล์อย่างละเอียด
                 if os.path.exists(model_path):
-                    model = YOLO(model_path)
-                    print(f"✅ Loaded existing model: {model_path}")
-                    break
+                    file_size = os.path.getsize(model_path)
+                    print(f"📄 Found {model_path} ({file_size} bytes)")
+                    
+                    # ตรวจสอบว่าไฟล์ไม่ว่าง
+                    if file_size == 0:
+                        print(f"⚠️ {model_path} is empty, skipping...")
+                        continue
+                    
+                    try:
+                        model = YOLO(model_path)
+                        print(f"✅ Loaded existing model: {model_path}")
+                        break
+                    except Exception as load_error:
+                        print(f"❌ Failed to load {model_path}: {load_error}")
+                        continue
+                else:
+                    print(f"❌ File not found: {model_path}")
                 # ถ้าเป็น pretrained model จาก ultralytics
-                elif model_path in ['yolov8n.pt', 'yolov8s.pt', 'yolov8m.pt', 'yolov8l.pt', 'yolov8x.pt']:
+                if model_path in ['yolov8n.pt', 'yolov8s.pt', 'yolov8m.pt', 'yolov8l.pt', 'yolov8x.pt']:
                     try:
                         print(f"📥 Downloading pretrained model: {model_path}")
                         model = YOLO(model_path)
@@ -198,6 +234,87 @@ def verify_and_backup_results(result_dir, original_image_path):
     except Exception as e:
         print(f"❌ Error in backup: {e}")
         return False
+
+def check_model_files():
+    """ตรวจสอบไฟล์โมเดลที่มีในระบบ"""
+    try:
+        # แสดง directory structure
+        current_path = os.getcwd()
+        parent_path = os.path.dirname(current_path)
+        root_path = os.path.dirname(parent_path)
+        
+        print(f"📍 Current: {current_path}")
+        print(f"📍 Parent:  {parent_path}")  
+        print(f"📍 Root:    {root_path}")
+        
+        # ตรวจสอบ current directory
+        current_files = []
+        for file in os.listdir('.'):
+            if file.endswith('.pt'):
+                size = os.path.getsize(file)
+                current_files.append(f"{file} ({size} bytes)")
+        
+        if current_files:
+            print(f"📄 .pt files in current directory: {current_files}")
+        else:
+            print("❌ No .pt files found in current directory")
+        
+        # ตรวจสอบ directories รอบๆ
+        search_dirs = [
+            ('current', '.'),
+            ('parent', '..'),
+            ('root', '../..'),
+            ('server/yolov8', './server/yolov8'),
+            ('server/yolov8 from parent', '../server/yolov8'),
+            ('server/yolov8 from root', '../../server/yolov8'),
+            ('yolov8', './yolov8'),
+            ('yolov8 from parent', '../yolov8'),
+            ('models', './models'),
+            ('models from parent', '../models'),
+        ]
+        
+        for desc, dir_path in search_dirs:
+            try:
+                if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                    pt_files = [f for f in os.listdir(dir_path) if f.endswith('.pt')]
+                    if pt_files:
+                        print(f"📁 Found .pt files in {desc} ({dir_path}): {pt_files}")
+            except (OSError, PermissionError):
+                continue
+        
+        # ค้นหา best.pt โดยเฉพาะ
+        print("🔍 Searching specifically for best.pt...")
+        found_best = False
+        
+        for desc, path in [
+            ('current', './best.pt'),
+            ('parent', '../best.pt'), 
+            ('root', '../../best.pt'),
+            ('server/yolov8', './server/yolov8/best.pt'),
+            ('server/yolov8 from parent', '../server/yolov8/best.pt'),
+            ('server/yolov8 from root', '../../server/yolov8/best.pt'),
+        ]:
+            if os.path.exists(path):
+                size = os.path.getsize(path)
+                abs_path = os.path.abspath(path)
+                print(f"✅ Found best.pt in {desc}: {abs_path} ({size} bytes)")
+                found_best = True
+        
+        if not found_best:
+            print("❌ best.pt not found in any expected locations")
+            
+            # ลองค้นหาในระบบ (ถ้าเป็น Unix)
+            try:
+                import subprocess
+                result = subprocess.run(['find', root_path, '-name', 'best.pt', '-type', 'f'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.stdout:
+                    print(f"🔍 System search found: {result.stdout.strip()}")
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                pass
+        
+    except Exception as e:
+        print(f"⚠️ Error checking model files: {e}")
 
 def fallback_copy(image_path):
     """สำรองแผน: คัดลอกรูปเดิมถ้า YOLO ไม่ทำงาน"""
