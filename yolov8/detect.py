@@ -115,7 +115,7 @@ def main():
         
         try:
             # ตั้ง timeout 90 วินาที สำหรับรูปใหญ่
-            timeout_duration = 120 if original_size_mb > 3 else 90
+            timeout_duration = 300 if original_size_mb > 3 else 90
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(timeout_duration)
             
