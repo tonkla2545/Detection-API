@@ -5,9 +5,16 @@ import shutil
 import time
 
 def main():
+    # Set environment variables for Render deployment
+    os.environ['YOLO_CONFIG_DIR'] = '/tmp'
+    os.environ['ULTRALYTICS_CONFIG_DIR'] = '/tmp'
+    os.environ['TORCH_HOME'] = '/tmp/torch'
+    os.environ['HF_HOME'] = '/tmp/huggingface'
+    
     print("🐍 YOLO Detection Script Started")
     print(f"🐍 Python version: {sys.version}")
     print(f"🐍 Current working directory: {os.getcwd()}")
+    print(f"🐍 Config dir: {os.environ.get('YOLO_CONFIG_DIR', 'default')}")
     
     if len(sys.argv) != 2:
         print("❌ Usage: python detect.py <image_path>")
@@ -40,19 +47,49 @@ def main():
         
         # โหลดโมเดล YOLOv8
         print("🤖 Loading YOLOv8 model...")
-        try:
-            model = YOLO('../best.pt')  # จะโหลดโมเดลอัตโนมัติครั้งแรก
-            print("✅ YOLOv8 model loaded successfully")
-        except Exception as e:
-            print(f"⚠️ Error loading model: {e}")
-            print("🔄 Trying to download model...")
+        
+        # ลำดับการลองโหลด model
+        model_paths = [
+            'yolov8n.pt',           # Default YOLOv8 nano
+            'yolov8s.pt',           # YOLOv8 small
+            './yolov8n.pt',         # ในโฟลเดอร์ปัจจุบัน
+            './best.pt',            # custom model ในโฟลเดอร์ปัจจุบัน
+            '../best.pt',           # custom model ในโฟลเดอร์บน
+            'best.pt'               # custom model
+        ]
+        
+        model = None
+        for model_path in model_paths:
             try:
-                model = YOLO('../best.pt')
-                print("✅ Model downloaded and loaded")
-            except Exception as e2:
-                print(f"❌ Failed to load model: {e2}")
-                fallback_copy(image_path)
-                return
+                print(f"🔍 Trying to load model: {model_path}")
+                
+                # ถ้าเป็นไฟล์ที่มีอยู่แล้ว
+                if os.path.exists(model_path):
+                    model = YOLO(model_path)
+                    print(f"✅ Loaded existing model: {model_path}")
+                    break
+                # ถ้าเป็น pretrained model จาก ultralytics
+                elif model_path in ['yolov8n.pt', 'yolov8s.pt', 'yolov8m.pt', 'yolov8l.pt', 'yolov8x.pt']:
+                    try:
+                        print(f"📥 Downloading pretrained model: {model_path}")
+                        model = YOLO(model_path)
+                        print(f"✅ Downloaded and loaded: {model_path}")
+                        break
+                    except Exception as download_error:
+                        print(f"⚠️ Failed to download {model_path}: {download_error}")
+                        continue
+                        
+            except Exception as e:
+                print(f"⚠️ Error loading {model_path}: {e}")
+                continue
+        
+        if model is None:
+            print("❌ Could not load any YOLO model")
+            print("🔄 Using fallback method...")
+            fallback_copy(image_path)
+            return
+        
+        print("✅ YOLOv8 model loaded successfully")
         
         # สร้างโฟลเดอร์ผลลัพธ์
         runs_dir = os.path.join(os.getcwd(), 'runs')
