@@ -34,7 +34,7 @@ def resize_image_if_needed(image_path, max_size_mb=2, max_dimension=1280):
 
 def load_model():
     from ultralytics import YOLO
-    for path in ['./yolov8/best_m.pt','./yolov8/best_n.pt','./yolov8/best_s.pt',]:
+    for path in ['./yolov8/best_n.pt','./yolov8/best_m.pt','./yolov8/best_s.pt',]:
         if os.path.exists(path) or path.endswith('n.pt'):
             try:
                 return YOLO(path)
