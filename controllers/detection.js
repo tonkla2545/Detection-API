@@ -125,266 +125,81 @@ cloudinary.config({
 });
 
 exports.detectionImg = async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ error: "No image file provided" });
-        }
+    if (!req.file) return res.status(400).json({ error: "No image file provided" });
 
-        const imagePath = req.file.path.replaceAll("\\", "/");
-        console.log("📤 Uploaded image path:", imagePath);
+    const imagePath = req.file.path.replaceAll("\\", "/");
+    const python = spawn("python", ["yolov8/detect.py", imagePath]);
 
-        const python = spawn("python", ["yolov8/detect.py", imagePath]);
+    let output = "", errorOutput = "";
 
-        let output = "";
-        let errorOutput = "";
+    python.stdout.on("data", data => output += data.toString());
+    python.stderr.on("data", data => errorOutput += data.toString());
 
-        python.stdout.on("data", (data) => {
-            const text = data.toString();
-            output += text;
-            console.log("🐍 Python stdout:", text.trim());
-        });
+    python.on("close", async code => {
+        try {
+            if (code !== 0) throw new Error(errorOutput.trim() || `Python failed with exit code ${code}`);
+            await new Promise(resolve => setTimeout(resolve, 1500));
 
-        python.stderr.on("data", (data) => {
-            const text = data.toString();
-            errorOutput += text;
-            console.error("🐍 Python stderr:", text.trim());
-        });
+            const detectDirs = [
+                path.resolve(process.cwd(), "runs", "detect"),
+                path.resolve(__dirname, "..", "runs", "detect"),
+                path.resolve("./runs/detect"),
+            ];
 
-        python.on("close", async (code) => {
-            try {
-                console.log(`🐍 Python process exited with code: ${code}`);
-                console.log(`🐍 Python stdout output: "${output.trim()}"`);
-                console.log(`🐍 Python stderr output: "${errorOutput.trim()}"`);
-                
-                // ถ้า Python ล้มเหลว
-                if (code !== 0) {
-                    throw new Error(`Python script failed with exit code ${code}. Error: ${errorOutput.trim() || 'No error message'}`);
+            let resultImgPath = null;
+
+            for (const dir of detectDirs) {
+                if (!fs.existsSync(dir)) continue;
+                const subDirs = fs.readdirSync(dir)
+                    .map(name => ({
+                        fullPath: path.join(dir, name),
+                        mtime: fs.statSync(path.join(dir, name)).mtimeMs
+                    }))
+                    .filter(d => fs.statSync(d.fullPath).isDirectory())
+                    .sort((a, b) => b.mtime - a.mtime);
+
+                if (subDirs.length === 0) continue;
+
+                const resultFiles = fs.readdirSync(subDirs[0].fullPath)
+                    .filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+
+                if (resultFiles.length > 0) {
+                    resultImgPath = path.join(subDirs[0].fullPath, resultFiles[0]);
+                    break;
                 }
-                
-                // Wait a bit for YOLOv8 to finish writing files
-                await new Promise(resolve => setTimeout(resolve, 2000));
-
-                // Try to find where YOLOv8 actually saved the results
-                let detectPath = null;
-                let resultDirPath = null;
-                let resultImgPath = null;
-
-                // Search in multiple possible locations
-                const searchPaths = [
-                    path.resolve(process.cwd(), 'runs', 'detect'),
-                    path.resolve(__dirname, '..', 'runs', 'detect'),
-                    path.resolve(__dirname, '..', '..', 'runs', 'detect'),
-                    path.resolve('./runs/detect'),
-                    path.resolve('./yolov8/runs/detect'),
-                    path.resolve(process.cwd(), 'yolov8', 'runs', 'detect'),
-                    // เพิ่มเส้นทางใหม่
-                    path.resolve('/tmp/runs/detect'),
-                    path.resolve(process.env.HOME || '/tmp', 'runs', 'detect')
-                ];
-
-                console.log("🔍 Searching for detection results in multiple paths...");
-                
-                for (const searchPath of searchPaths) {
-                    console.log(`📁 Checking: ${searchPath}`);
-                    
-                    if (fs.existsSync(searchPath)) {
-                        try {
-                            const dirContents = fs.readdirSync(searchPath);
-                            console.log(`📂 Contents of ${searchPath}:`, dirContents);
-                            
-                            const subDirs = dirContents
-                                .map(name => ({
-                                    name,
-                                    fullPath: path.join(searchPath, name),
-                                }))
-                                .filter(entry => {
-                                    try {
-                                        return fs.statSync(entry.fullPath).isDirectory();
-                                    } catch (err) {
-                                        return false;
-                                    }
-                                })
-                                .sort((a, b) => {
-                                    try {
-                                        return fs.statSync(b.fullPath).mtimeMs - fs.statSync(a.fullPath).mtimeMs;
-                                    } catch (err) {
-                                        return 0;
-                                    }
-                                });
-
-                            if (subDirs.length > 0) {
-                                detectPath = searchPath;
-                                resultDirPath = subDirs[0].fullPath;
-                                console.log(`✅ Found detection results at: ${resultDirPath}`);
-                                break;
-                            }
-                        } catch (err) {
-                            console.warn(`⚠️ Error reading ${searchPath}:`, err.message);
-                        }
-                    }
-                }
-
-                // ถ้าไม่เจอโฟลเดอร์ ให้ลองหาไฟล์ผลลัพธ์โดยตรง
-                if (!resultDirPath) {
-                    console.log("🔍 No subdirectories found, searching for result files directly...");
-                    
-                    // ลองหาไฟล์ในโฟลเดอร์ที่มีอยู่
-                    const directSearchPaths = [
-                        ...searchPaths,
-                        // เพิ่มเส้นทางที่อาจจะมีไฟล์โดยตรง
-                        path.dirname(imagePath), // โฟลเดอร์เดียวกับรูปต้นฉบับ
-                        path.resolve(process.cwd()),
-                        path.resolve(__dirname, '..'),
-                        '/tmp'
-                    ];
-
-                    for (const searchPath of directSearchPaths) {
-                        if (fs.existsSync(searchPath)) {
-                            try {
-                                const files = fs.readdirSync(searchPath);
-                                const imageFiles = files.filter(file => 
-                                    /\.(jpg|jpeg|png|webp)$/i.test(file) && 
-                                    file !== path.basename(imagePath) // ไม่เอารูปต้นฉบับ
-                                );
-                                
-                                if (imageFiles.length > 0) {
-                                    // หาไฟล์ที่สร้างล่าสุด
-                                    const newestFile = imageFiles
-                                        .map(file => ({
-                                            name: file,
-                                            fullPath: path.join(searchPath, file),
-                                            mtime: fs.statSync(path.join(searchPath, file)).mtimeMs
-                                        }))
-                                        .sort((a, b) => b.mtime - a.mtime)[0];
-                                    
-                                    resultImgPath = newestFile.fullPath;
-                                    console.log(`✅ Found result image directly: ${resultImgPath}`);
-                                    break;
-                                }
-                            } catch (err) {
-                                console.warn(`⚠️ Error searching ${searchPath}:`, err.message);
-                            }
-                        }
-                    }
-                }
-
-                // ถ้าเจอโฟลเดอร์แล้ว ให้หาไฟล์รูปในโฟลเดอร์นั้น
-                if (resultDirPath && !resultImgPath) {
-                    const resultFiles = fs.readdirSync(resultDirPath).filter(file =>
-                        /\.(jpg|jpeg|png|webp)$/i.test(file)
-                    );
-
-                    if (resultFiles.length === 0) {
-                        const allFiles = fs.readdirSync(resultDirPath);
-                        throw new Error(`No image files found in result folder ${resultDirPath}. Found files: ${allFiles.join(', ')}`);
-                    }
-
-                    resultImgPath = path.join(resultDirPath, resultFiles[0]);
-                }
-
-                // ถ้าไม่เจอไฟล์ผลลัพธ์เลย
-                if (!resultImgPath) {
-                    // แสดงข้อมูล debug ทั้งหมด
-                    console.log("🔍 Debug Information:");
-                    console.log("- Python exit code:", code);
-                    console.log("- Python stdout:", output.trim() || "No output");
-                    console.log("- Python stderr:", errorOutput.trim() || "No errors");
-                    console.log("- Image path:", imagePath);
-                    console.log("- Current working directory:", process.cwd());
-                    
-                    // ลองหารูปในโฟลเดอร์ปัจจุบัน
-                    const currentDirFiles = fs.readdirSync(process.cwd())
-                        .filter(file => /\.(jpg|jpeg|png|webp)$/i.test(file));
-                    console.log("- Images in current directory:", currentDirFiles);
-                    
-                    throw new Error(`No result image found after Python detection. 
-                        Exit code: ${code}
-                        Python output: "${output.trim() || 'No output'}"
-                        Python errors: "${errorOutput.trim() || 'No errors'}"
-                        Current directory files: ${currentDirFiles.join(', ')}`);
-                }
-
-                console.log("🖼️ Processing result image:", resultImgPath);
-
-                // Verify the result image exists
-                if (!fs.existsSync(resultImgPath)) {
-                    throw new Error(`Result image file doesn't exist: ${resultImgPath}`);
-                }
-
-                // ⬆️ Upload to Cloudinary
-                const uploadResult = await cloudinary.uploader.upload(resultImgPath, {
-                    folder: "detections"
-                });
-
-                console.log("🌐 Cloudinary URL:", uploadResult.secure_url);
-
-                // ✅ Send response
-                if (!res.headersSent) {
-                    res.json({
-                        result: output.trim(),
-                        imageUrl: uploadResult.secure_url,
-                    });
-                }
-
-                // 🧹 Clean up files after successful response
-                cleanup(imagePath, resultDirPath);
-
-            } catch (err) {
-                console.error("❌ Error in detection processing:", err.message);
-                console.error("Full error:", err);
-                
-                if (!res.headersSent) {
-                    res.status(500).json({ 
-                        error: "Detection processing failed", 
-                        details: err.message 
-                    });
-                }
-                
-                // Still try to clean up the original uploaded file
-                cleanup(imagePath);
             }
-        });
 
-        // Handle python process errors
-        python.on('error', (err) => {
-            console.error("❌ Python process error:", err);
+            if (!resultImgPath || !fs.existsSync(resultImgPath)) {
+                throw new Error("Result image not found");
+            }
+
+            const uploadResult = await cloudinary.uploader.upload(resultImgPath, { folder: "detections" });
+
             if (!res.headersSent) {
-                res.status(500).json({ 
-                    error: "Detection process failed to start", 
-                    details: err.message 
+                res.json({
+                    result: output.trim(),
+                    imageUrl: uploadResult.secure_url,
                 });
             }
-        });
 
-    } catch (error) {
-        console.error("❌ Internal server error:", error);
-        if (!res.headersSent) {
-            res.status(500).json({ error: "Internal server error" });
+            cleanup(imagePath, path.dirname(resultImgPath));
+
+        } catch (err) {
+            console.error("❌ Detection error:", err);
+            if (!res.headersSent) {
+                res.status(500).json({ error: err.message });
+            }
+            cleanup(imagePath);
         }
-    }
+    });
+
+    python.on("error", err => {
+        console.error("❌ Python error:", err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
 };
 
-// Helper function for cleanup
-function cleanup(imagePath, resultDirPath = null) {
-    // Clean up original uploaded image
-    if (imagePath && fs.existsSync(imagePath)) {
-        fs.unlink(imagePath, (err) => {
-            if (err) {
-                console.error("❌ Failed to delete original uploaded image:", err);
-            } else {
-                console.log("🧹 Deleted original uploaded image:", imagePath);
-            }
-        });
-    }
-
-    // Clean up result directory
-    if (resultDirPath && fs.existsSync(resultDirPath)) {
-        fs.rm(resultDirPath, { recursive: true, force: true }, (err) => {
-            if (err) {
-                console.error("❌ Failed to delete detection result folder:", err);
-            } else {
-                console.log("🧹 Deleted detection folder:", resultDirPath);
-            }
-        });
-    }
+function cleanup(original, dir = null) {
+    if (fs.existsSync(original)) fs.unlink(original, () => {});
+    if (dir && fs.existsSync(dir)) fs.rm(dir, { recursive: true, force: true }, () => {});
 }
